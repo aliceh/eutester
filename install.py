@@ -22,10 +22,10 @@ def main():
     cmd="cd /root/ &&  virtualenv virtual_env"
     pcmd(cmd)
 
-    cmd="cd virtual_env/bin && source activate"
+    cmd="cd /root/virtual_env/bin && source activate"
     pcmd(cmd)
 
-    cmd="cd /root/ && wget http://192.168.51.136/deps/argparse-1.2.1.tar.gz -O argparse.tar.gz && tar -zxvf argparse.tar.gz"
+    cmd="cd /root/ && wget http://argparse.googlecode.com/files/argparse-1.2.1.tar.gz -O argparse.tar.gz && tar -zxvf argparse.tar.gz"
     pcmd(cmd)
 
     cmd="cd /root/argparse-1.2.1 && python setup.py install"
@@ -52,7 +52,7 @@ def main():
     cmd="cd /root/ && mkdir testerworkdir"
     pcmd(cmd)
 
-    cmd="cd virtual_env/bin && source activate"
+    cmd="cd /root/virtual_env/bin && source activate"
     pcmd(cmd)
 
 
