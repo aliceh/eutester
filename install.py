@@ -1,19 +1,23 @@
 #!/usr/bin/python
 
-import os
+
+import sys
 import subprocess
 
 def pcmd(cmd):
     print  '\nCOMMAND :' + cmd + '\n'
-    subprocess.call('echo "COMMAND: ' + cmd + '" >>/root/eutester_install.log;', shell=True)
+    subprocess.call('echo "COMMAND: ' + cmd + '" >>/root/eutester_install.log;', bash=True)
     output = subprocess.call( cmd +'; echo "Exit code" $? >> /root/eutester_install.log;', shell=True)
     #    os.system(cmd)
 
 subprocess.call('rm -f eutester_install.log', shell=True)
 
+if sys.version_info < (2, 6):
+    raise "must use python 2.6 or greater"
+
 def main():
 
-    cmd="cd /root/ ; yum install python-setuptools"
+    cmd="cd /root/ ; yum -y install python-setuptools"
     pcmd(cmd)
 
     cmd="cd /root/ ; easy_install virtualenv"
@@ -25,8 +29,10 @@ def main():
     cmd="cd /root/virtual_env ; virtualenv virtual_env"
     pcmd(cmd)
 
-    cmd="cd /root/virtual_env/bin ; source activate"
+    cmd="bash -c 'cd /root/virtual_env/virtual_env/bin; source activate'"
+    #; echo exit code $?; echo prompt $PS1 '"
     pcmd(cmd)
+
 
     cmd="cd /root/ ; wget http://argparse.googlecode.com/files/argparse-1.2.1.tar.gz -O argparse.tar.gz && tar -zxvf argparse.tar.gz"
     pcmd(cmd)
@@ -52,11 +58,7 @@ def main():
     cmd="cd /root/ ; mkdir testerworkdir"
     pcmd(cmd)
 
-    cmd="cd /root/virtual_env/bin ; source activate"
-    pcmd(cmd)
-
-
-    cmd="cd /root/ ; yum install ntp"
+    cmd="cd /root/ ; yum -y install ntp"
     pcmd(cmd)
 
     cmd="chkconfig ntpd on ; service ntpd start && ntpdate -u 0.centos.pool.ntp.org"
