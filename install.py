@@ -16,7 +16,7 @@ workmain = "/root/" #main working directory
 
 while (sys.version_info < (2, 6)):
     print "Found python version "+str(sys.version_info[0])+"."+str(sys.version_info[1])+ " must use python 2.6 or greater."
-    break
+    sys.exit()
 
 
 def main():
