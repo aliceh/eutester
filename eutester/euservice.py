@@ -154,18 +154,20 @@ class EuserviceManager(object):
             type = " -T " + str(type) 
         else:
             type = ""
+        describe_services = []
         #### This is a hack around the fact that the -P filter is not working need to fix this once that functionality is fixed
-        if partition is not None:
-            partition = " | grep " + str(partition) 
-        else:
+        if partition is None:
             partition = ""
         try:
-            describe_services = self.tester.clc.sys(self.eucaprefix + "/usr/sbin/euca-describe-services " + str(type)  +  "| grep SERVICE" + str(partition), timeout=15)
-            if len(describe_services) < 1:
+            out = self.tester.clc.sys(self.eucaprefix + "/usr/sbin/euca-describe-services " + str(type), timeout=15)
+            for line in out:
+                if re.search(r"SERVICE.+"+str(partition), line):
+                    describe_services.append(line)
+            if not describe_services:
                 raise IndexError("Did not receive proper response from describe services when looking for " + str(type))
         except Exception, e:
             if len(self.tester.get_component_machines("clc")) is 1:
-                raise Exception("Unable to get service information from the only clc: " + self.tester.clc.hostname )
+                raise Exception("Unable to get service information from the only clc: " + self.tester.clc.hostname+", err:" +str(e))
             if attempt_both:
                 self.tester.swap_clc()
                 describe_services = self.tester.clc.sys(self.eucaprefix + "/usr/sbin/euca-describe-services " + str(type)  + " | grep SERVICE "  + str(partition)  , timeout=15)
@@ -183,7 +185,7 @@ class EuserviceManager(object):
     def populate_nodes(self):
         clc = self.get_enabled_clc()
         nodes_list = clc.machine.sys("euca_conf --list-nodes")
-        for node_string in node_lists:
+        for node_string in nodes_list:
             split_string = node_string.split()
             node = Eunode(split_string[1], split_string[2])
             for part in self.partitions:
@@ -320,7 +322,10 @@ class EuserviceManager(object):
             raise Exception("Did not properly modify service")
     
     def stop(self, euservice):
-        self.modify_process(euservice, "stop")
+        if re.search("cluster", euservice.type):
+            self.modify_process(euservice, "cleanstop")
+        else:
+            self.modify_process(euservice, "stop")
         euservice.running = False
         
     def start(self, euservice):
@@ -334,7 +339,7 @@ class EuserviceManager(object):
         self.modify_service(euservice, "DISABLED")
         
     def wait_for_service(self, euservice, state = "ENABLED", attempt_both = True, timeout=600):
-        interval = 60
+        interval = 20
         poll_count = timeout / interval
         while (poll_count > 0):
             matching_services = []

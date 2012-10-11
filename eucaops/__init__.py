@@ -30,21 +30,25 @@
 #
 # Author: vic.iglesias@eucalyptus.com
 # Author: matt.clark@eucalyptus.com
+from boto.ec2.image import Image
+from boto.ec2.volume import Volume
 
 from iamops import IAMops
 from ec2ops import EC2ops
 from s3ops import S3ops
+from stsops import STSops
 import time
 from eutester.euservice import EuserviceManager
+from boto.ec2.instance import Reservation
 from eutester.euconfig import EuConfig
-from eutester.machine import machine
+from eutester.machine import Machine
 from eutester import eulogger
 import re
 import os
 
-class Eucaops(EC2ops,S3ops,IAMops):
+class Eucaops(EC2ops,S3ops,IAMops,STSops):
     
-    def __init__(self, config_file=None, password=None, keypath=None, credpath=None, aws_access_key_id=None, aws_secret_access_key = None,  account="eucalyptus", user="admin", username=None, region=None, ec2_ip=None, s3_ip=None, boto_debug=0):
+    def __init__(self, config_file=None, password=None, keypath=None, credpath=None, aws_access_key_id=None, aws_secret_access_key = None,  account="eucalyptus", user="admin", username=None, region=None, ec2_ip=None, s3_ip=None, download_creds=True,boto_debug=0):
         self.config_file = config_file 
         self.eucapath = "/opt/eucalyptus"
         self.ssh = None
@@ -60,10 +64,14 @@ class Eucaops(EC2ops,S3ops,IAMops):
         self.key_dir = "./"
         self.hypervisor = None
         self.clc_index = 0
-        
+        self.credpath = credpath
+        self.download_creds = download_creds
         self.logger = eulogger.Eulogger(identifier="EUTESTER")
+        self.debug = self.logger.log.debug
+        self.critical = self.logger.log.critical
+        self.info = self.logger.log.info
         
-        if self.config_file != None:
+        if self.config_file is not None:
             ## read in the config file
             self.debug("Reading config file: " + config_file)
             self.config = self.read_config(config_file)
@@ -79,7 +87,7 @@ class Eucaops(EC2ops,S3ops,IAMops):
             ### Private cloud with root access 
             ### Need to get credentials for the user if there arent any passed in
             ### Need to create service manager for user if we have an ssh connection and password
-            if (self.password != None):
+            if self.password is not None and self.download_creds:
                 clc_array = self.get_component_machines("clc")
                 self.clc = clc_array[0]
                 walrus_array = self.get_component_machines("ws")
@@ -100,11 +108,11 @@ class Eucaops(EC2ops,S3ops,IAMops):
                         self.swap_clc()
                         self.sftp = self.clc.ssh.connection.open_sftp()
                         self.credpath = self.get_credentials(account,user)
-        
+                        
                 self.service_manager = EuserviceManager(self)
                 self.clc = self.service_manager.get_enabled_clc().machine
                 self.walrus = self.service_manager.get_enabled_walrus().machine 
-        EC2ops.__init__(self, credpath=credpath, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key, username=username, region=region, ec2_ip=ec2_ip, s3_ip=s3_ip, boto_debug=boto_debug)
+        EC2ops.__init__(self, credpath=self.credpath, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key, username=username, region=region, ec2_ip=ec2_ip, s3_ip=s3_ip, boto_debug=boto_debug)
         self.test_resources = {}
         self.setup_s3_resource_trackers()
         self.setup_ec2_resource_trackers()
@@ -115,12 +123,12 @@ class Eucaops(EC2ops,S3ops,IAMops):
         type        VM type to get available vms 
         """
         
-        zones = self.ec2.get_all_zones('verbose') 
-        if type == None:
+        zones = self.ec2.get_all_zones("verbose")
+        if type is None:
             type = "m1.small"
         ### Look for the right place to start parsing the zones
         zone_index = 0
-        if zone != None: 
+        if zone is not None:
             while zone_index < len(zones):
                 current_zone = zones[zone_index]
                 if re.search( zone, current_zone.name):
@@ -155,9 +163,9 @@ class Eucaops(EC2ops,S3ops,IAMops):
         """
         command = self.eucapath + "/usr/sbin/euca-modify-property -p " + property + "=" + value
         if self.found(command, property):
-            self.test_name("Properly modified property")
+            self.debug("Properly modified property " + property)
         else:
-            self.fail("Could not modify " + property)
+            raise Exception("Setting property " + property + " failed")
     
    
     def cleanup_artifacts(self):
@@ -198,7 +206,7 @@ class Eucaops(EC2ops,S3ops,IAMops):
         current_artifacts["zones"] = self.ec2.get_all_zones()
         
         if verbose:
-            self.info("Current resources in the system:\n" + pprint.pformat(current_artifacts))
+            self.debug("Current resources in the system:\n" + str(current_artifacts))
         return current_artifacts
     
     def read_config(self, filepath, username="root"):
@@ -251,16 +259,23 @@ class Eucaops(EC2ops,S3ops,IAMops):
                 machine_dict["arch"] = machine_details[3]
                 machine_dict["source"] = machine_details[4]
                 machine_dict["components"] = map(str.lower, machine_details[5].strip('[]').split())
+               
+                ### We dont want to login to ESX boxes
+                if re.search("vmware", machine_dict["distro"], re.IGNORECASE):
+                    connect=False
+                else:
+                    connect=True
                 ### ADD the machine to the array of machine
-                cloud_machine = machine(   machine_dict["hostname"], 
-                                        machine_dict["distro"], 
-                                        machine_dict["distro_ver"], 
-                                        machine_dict["arch"], 
-                                        machine_dict["source"], 
-                                        machine_dict["components"],
-                                        self.password,
-                                        self.keypath,
-                                        username
+                cloud_machine = Machine(   machine_dict["hostname"], 
+                                        distro = machine_dict["distro"], 
+                                        distro_ver = machine_dict["distro_ver"], 
+                                        arch = machine_dict["arch"], 
+                                        source = machine_dict["source"], 
+                                        components = machine_dict["components"],
+                                        connect = connect,
+                                        password = self.password,
+                                        keypath = self.keypath,
+                                        username = username
                                         )
                 machines.append(cloud_machine)
                 
@@ -309,7 +324,8 @@ class Eucaops(EC2ops,S3ops,IAMops):
     
     def get_machine_by_ip(self, hostname):
         machines = [machine for machine in self.config['machines'] if re.search(hostname, machine.hostname)]
-        if len(machines) == 0:
+        
+        if machines is None or len(machines) == 0:
             self.fail("Could not find machine at "  + hostname + " in list of machines")
             return None
         else:
@@ -354,27 +370,31 @@ class Eucaops(EC2ops,S3ops,IAMops):
             
             ### Create credential from Active CLC
             self.create_credentials(admin_cred_dir, account, user)
-            
+        
             ### SETUP directory locally
             self.setup_local_creds_dir(admin_cred_dir)
-        
+          
             ### DOWNLOAD creds from clc
             self.download_creds_from_clc(admin_cred_dir)
             ### IF there are 2 clcs make sure to sync credentials across them
-                
+          
         ### sync the credentials  to all CLCs
         for clc in clcs:
             self.send_creds_to_machine(admin_cred_dir, clc)
-        
+
         return admin_cred_dir
    
     def create_credentials(self, admin_cred_dir, account, user):
+       
+        cred_dir =  admin_cred_dir + "/creds.zip"
+        self.sys('rm -f '+cred_dir)
         cmd_download_creds = self.eucapath + "/usr/sbin/euca_conf --get-credentials " + admin_cred_dir + "/creds.zip " + "--cred-user "+ user +" --cred-account " + account 
-        
+       
         if self.clc.found( cmd_download_creds, "The MySQL server is not responding"):
             raise IOError("Error downloading credentials, looks like CLC was not running")
         if self.clc.found( "unzip -o " + admin_cred_dir + "/creds.zip " + "-d " + admin_cred_dir, "cannot find zipfile directory"):
             raise IOError("Empty ZIP file returned by CLC")
+       
         
     
     def download_creds_from_clc(self, admin_cred_dir):
@@ -393,7 +413,6 @@ class Eucaops(EC2ops,S3ops,IAMops):
             machine.sys("unzip -o " + admin_cred_dir + "/creds.zip -d " + admin_cred_dir )
             machine.sys("sed -i 's/" + self.clc.hostname + "/" + machine.hostname  +"/g' " + admin_cred_dir + "/eucarc")
             
-
         
     def setup_local_creds_dir(self, admin_cred_dir):
         if not os.path.exists(admin_cred_dir):
@@ -402,10 +421,13 @@ class Eucaops(EC2ops,S3ops,IAMops):
     def setup_remote_creds_dir(self, admin_cred_dir):
         self.sys("mkdir " + admin_cred_dir)
     
-    def sys(self, cmd, verbose=True, timeout=120):
+    def sys(self, cmd, verbose=True, listformat=True, timeout=120, code=None):
         """ By default will run a command on the CLC machine, the connection used can be changed by passing a different hostname into the constructor
             For example:
             instance = Eutester( hostname=instance.ip_address, keypath="my_key.pem")
             instance.sys("mount") # check mount points on instance and return the output as a list
         """
-        return self.clc.sys(cmd, verbose=verbose, timeout=timeout)
+        return self.clc.sys(cmd, verbose=verbose,  listformat=listformat, timeout=timeout, code=code)
+    
+
+    
