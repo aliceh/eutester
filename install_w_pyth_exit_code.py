@@ -24,12 +24,15 @@ def print_command(shell_command):
 
     log = open("install_log.txt", "w")
     log_short = open("install_exit_code.txt", "w")
-while (sys.version_info < (2, 6)):
-    print "found python version "+str(sys.version_info[0])+"."+str(sys.version_info[1])+ " must use python 2.6 or greater."
-    sys.exit()
 
 
 def main():
+
+
+
+    if (sys.version_info < (2, 6)):
+        print "found python version "+str(sys.version_info[0])+"."+str(sys.version_info[1])+ " must use python 2.6 or greater."
+        sys.exit()
 
     shell_command="cd "+ workmain + " ;" +" yum -y install python-setuptools"
     print_command(shell_command)
@@ -72,7 +75,7 @@ def main():
     shell_command="cd "+ workmain +";"+" yum -y install ntp"
     print_command(shell_command)
 
-    shell_command="chkconlogig ntpd on ; service ntpd start && ntpdate -u 0.centos.pool.ntp.org"
+    shell_command="chkconfig ntpd on ; service ntpd start && ntpdate -u 0.centos.pool.ntp.org"
     print_command(shell_command)
 
     # to extract ntp server address logrom ntp.conlog logile:  
