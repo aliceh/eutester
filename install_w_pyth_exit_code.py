@@ -17,13 +17,13 @@ def print_command(shell_command):
     exit_code = str( execute_shell_command.wait())
     log.write(command_string + output)
     log_short.write(command_string+ 'Exitcode: '+exit_code )
-    subprocess.call('rm -log install_log.txt', shell=True)
-    subprocess.call('rm -log install_exit_code.txt', shell=True)
+subprocess.call('rm -f install_log.txt', shell=True)
+subprocess.call('rm -f install_exit_code.txt', shell=True)
 
-    workmain = "/root/" #main working directory
+workmain = "/root/" #main working directory
 
-    log = open("install_log.txt", "w")
-    log_short = open("install_exit_code.txt", "w")
+log = open("install_log.txt", "w")
+log_short = open("install_exit_code.txt", "w")
 
 
 def main():
@@ -48,7 +48,7 @@ def main():
     print_command(shell_command)
 
 
-    shell_command="cd "+ workmain +";"+" wget http://argparse.googlecode.com/logiles/argparse-1.2.1.tar.gz -O argparse.tar.gz && tar -zxvlog argparse.tar.gz"
+    shell_command="cd "+ workmain +";"+" wget http://argparse.googlecode.com/files/argparse-1.2.1.tar.gz -O argparse.tar.gz && tar -zxvf argparse.tar.gz"
     print_command(shell_command)
 
     shell_command="cd "+ workmain +"argparse-1.2.1 ; python setup.py install"
