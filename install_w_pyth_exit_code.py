@@ -1,6 +1,6 @@
 #!/usr/bin/python
-#This code prepares eutester environment and outputs install log inlogo and exit code inlogo into two logiles.
-#Writing olog the log inlogo and exit code inlogo is executed through python (not shell) calls
+#This code prepares eutester environment and outputs install log info and exit code info into two files.
+#Writing of the log info and exit code info is executed through python (not shell) calls
 
 import sys
 import subprocess
