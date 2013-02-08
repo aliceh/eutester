@@ -78,8 +78,8 @@ def main():
     shell_command="chkconfig ntpd on ; service ntpd start && ntpdate -u 0.centos.pool.ntp.org"
     print_command(shell_command)
 
-    # to extract ntp server address logrom ntp.conlog logile:  
-    # cat /etc/ntp.conlog|grep "server 0.*pool.ntp.org" |awk '{print $2}'
+    # to extract ntp server address from ntp.conf file:  
+    # cat /etc/ntp.conf|grep "server 0.*pool.ntp.org" |awk '{print $2}'
 
     shell_command="ntpdate -u 0.centos.pool.ntp.org"
     print_command(shell_command)
