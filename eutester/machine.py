@@ -95,6 +95,7 @@ class Machine:
                  verbose = True ):
         
         self.hostname = hostname
+        self.distro_ver = distro_ver
         self.distro = self.convert_to_distro(distro, distro_ver)
         if self.distro.package_manager is not None:
             self.repo_utils = RepoUtils(self, self.distro.package_manager)
@@ -163,8 +164,11 @@ class Machine:
                 pass
     
     def interrupt_network(self, time = 120, interface = "eth0"):
-        self.sys("ifdown " + interface + " && sleep " + str(time) + " && ifup eth0",  timeout=3)
-        
+        try:
+            self.sys("ifdown " + interface + " && sleep " + str(time) + " && ifup eth0",  timeout=3)
+        except Exception,e:
+            pass
+
     def sys(self, cmd, verbose=True, timeout=120, listformat=True, code=None):
         '''
         Issues a command against the ssh connection to this instance
@@ -381,40 +385,43 @@ class Machine:
         cmd = 'df '+str(path)
         if verbose:
             self.debug('get_df_info cmd:'+str(cmd))
-        out = self.cmd(cmd,listformat=True)
-        if out['status'] != 0:
-            raise Exception("df returned err code:"+str(out['status']))
-        output = out['output']
+        output = self.sys(cmd, code=0)
         # Get the presented fields from commands output,
         # Convert to lowercase, use this as our dict keys
         fields=[]
-        for field in str(output[0]).split():
+        line = 0
+        for field in str(output[line]).split():
             fields.append(str(field).lower())
+        # Move line forward and gather columns into the dict to be returned
         x = 0 
-        for value in str(output[1]).split():
+        line += 1
+        # gather columns equal to the number of column headers accounting for newlines...
+        while x < (len(fields)-1):
+            for value in str(output[line]).split():
                 ret[fields[x]]=value
                 if verbose:
                     self.debug(str('DF FIELD: '+fields[x])+' = '+str(value))
                 x += 1
+            line += 1
         return ret
     
-    def upgrade(self, package=None):
-        self.repo_utils.package_manager.upgrade(package)
+    def upgrade(self, package=None, nogpg=False):
+        self.package_manager.upgrade(package, nogpg=nogpg)
     
-    def add_repo(self, url):
-        self.repo_utils.package_manager.add_repo(url)
+    def add_repo(self, url, name="test-repo"):
+        self.package_manager.add_repo(url,name)
     
-    def install(self, package):
-        self.repo_utils.package_manager.install(package)
+    def install(self, package, nogpg=False):
+        self.package_manager.install(package,nogpg=nogpg)
 
     def update_repos(self):
-        self.repo_utils.package_manager.update_repos()
+        self.package_manager.update_repos()
     
     def get_package_info(self):
-        self.repo_utils.package_manager.get_package_info()
+        self.package_manager.get_package_info()
     
     def get_installed_packages(self):
-        self.repo_utils.package_manager.get_installed_packages()
+        self.package_manager.get_installed_packages()
             
     def get_available(self, path, unit=1):
         """
@@ -467,10 +474,11 @@ class Machine:
     
     def __str__(self):
         s  = "+++++++++++++++++++++++++++++++++++++++++++++++++++++\n"
-        s += "+" + "Hostname:" + self.hostname + "\n"
-        s += "+" + "Distro: " + self.distro +"\n"
-        s += "+" + "Distro Version: " +  self.distro_ver +"\n"
-        s += "+" + "Install Type: " +  self.source +"\n"
+        s += "+" + "Hostname:" + str(self.hostname) + "\n"
+        dname = self.distro.name if self.distro else ""
+        s += "+" + "Distro: " + str(dname) +"\n"
+        s += "+" + "Distro Version: " +  str(self.distro_ver) +"\n"
+        s += "+" + "Install Type: " +  str(self.source) +"\n"
         s += "+" + "Components: " +   str(self.components) +"\n"
         s += "+++++++++++++++++++++++++++++++++++++++++++++++++++++"
         return s

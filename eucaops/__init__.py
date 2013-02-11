@@ -32,6 +32,7 @@
 # Author: matt.clark@eucalyptus.com
 from boto.ec2.image import Image
 from boto.ec2.volume import Volume
+from cwops import CWops
 
 from iamops import IAMops
 from ec2ops import EC2ops
@@ -46,10 +47,11 @@ from eutester import eulogger
 import re
 import os
 
-class Eucaops(EC2ops,S3ops,IAMops,STSops):
+class Eucaops(EC2ops,S3ops,IAMops,STSops,CWops):
     
-    def __init__(self, config_file=None, password=None, keypath=None, credpath=None, aws_access_key_id=None, aws_secret_access_key = None,  account="eucalyptus", user="admin", username=None, region=None, ec2_ip=None, s3_ip=None, download_creds=True,boto_debug=0):
+    def __init__(self, config_file=None, password=None, keypath=None, credpath=None, aws_access_key_id=None, aws_secret_access_key = None,  account="eucalyptus", user="admin", username=None, APIVersion='2010-08-31', region=None, ec2_ip=None, s3_ip=None, download_creds=True,boto_debug=0):
         self.config_file = config_file 
+        self.APIVersion = APIVersion
         self.eucapath = "/opt/eucalyptus"
         self.ssh = None
         self.sftp = None
@@ -62,15 +64,18 @@ class Eucaops(EC2ops,S3ops,IAMops,STSops):
         self.fail_count = 0
         self.start_time = time.time()
         self.key_dir = "./"
-        self.hypervisor = None
         self.clc_index = 0
         self.credpath = credpath
         self.download_creds = download_creds
-        self.logger = eulogger.Eulogger(identifier="EUTESTER")
+        self.logger = eulogger.Eulogger(identifier="EUCAOPS")
         self.debug = self.logger.log.debug
         self.critical = self.logger.log.critical
         self.info = self.logger.log.info
-        
+        self.username = username
+        self.account_id = None
+        self.aws_access_key_id = aws_access_key_id
+        self.aws_secret_access_key = aws_secret_access_key 
+
         if self.config_file is not None:
             ## read in the config file
             self.debug("Reading config file: " + config_file)
@@ -107,16 +112,31 @@ class Eucaops(EC2ops,S3ops,IAMops,STSops):
                             raise Exception("Could not get credentials from first CLC and no other to try")
                         self.swap_clc()
                         self.sftp = self.clc.ssh.connection.open_sftp()
-                        self.credpath = self.get_credentials(account,user)
+                        self.get_credentials(account,user)
                         
                 self.service_manager = EuserviceManager(self)
                 self.clc = self.service_manager.get_enabled_clc().machine
                 self.walrus = self.service_manager.get_enabled_walrus().machine 
-        EC2ops.__init__(self, credpath=self.credpath, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key, username=username, region=region, ec2_ip=ec2_ip, s3_ip=s3_ip, boto_debug=boto_debug)
+        if self.credpath and not ec2_ip:
+            ec2_ip = self.get_ec2_ip()
+        if self.credpath and not s3_ip:
+            s3_ip = self.get_s3_ip()
+        
+        if self.credpath and not aws_access_key_id:
+            aws_access_key_id = self.get_access_key()
+        if self.credpath and not aws_secret_access_key:
+            aws_secret_access_key = self.get_secret_key()
         self.test_resources = {}
-        self.setup_s3_resource_trackers()
-        self.setup_ec2_resource_trackers()
-    
+        if self.download_creds:
+            self.setup_ec2_connection(endpoint=ec2_ip, path="/services/Eucalyptus", port=8773, is_secure=False, region=region, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key, APIVersion=APIVersion, boto_debug=boto_debug)
+            self.setup_ec2_resource_trackers()
+            self.setup_s3_connection(endpoint=s3_ip, path="/services/Walrus", port=8773, is_secure=False,aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key,  boto_debug=boto_debug)
+            self.setup_s3_resource_trackers()
+            self.setup_iam_connection(endpoint=ec2_ip, path="/services/Euare", port=8773, is_secure=False, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key,  boto_debug=boto_debug)
+            self.setup_sts_connection( endpoint=ec2_ip, path="/services/Eucalyptus", port=8773, is_secure=False, region=region, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key, boto_debug=boto_debug)
+            self.setup_cw_connection( endpoint=ec2_ip, path="/services/CloudWatch", port=8773, is_secure=False, region=region, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key, boto_debug=boto_debug)
+            self.setup_cw_resource_trackers()
+
     def get_available_vms(self, type=None, zone=None):
         """
         Get available VMs of a certain type or return a dictionary with all types and their available vms
@@ -376,8 +396,10 @@ class Eucaops(EC2ops,S3ops,IAMops,STSops):
           
             ### DOWNLOAD creds from clc
             self.download_creds_from_clc(admin_cred_dir)
+
+            ### SET CREDPATH ONCE WE HAVE DOWNLOADED IT LOCALLY
+            self.credpath = admin_cred_dir
             ### IF there are 2 clcs make sure to sync credentials across them
-          
         ### sync the credentials  to all CLCs
         for clc in clcs:
             self.send_creds_to_machine(admin_cred_dir, clc)
@@ -411,7 +433,7 @@ class Eucaops(EC2ops,S3ops,IAMops,STSops):
             machine.sys("mkdir " + admin_cred_dir)
             machine.sftp.put( admin_cred_dir + "/creds.zip" , admin_cred_dir + "/creds.zip")
             machine.sys("unzip -o " + admin_cred_dir + "/creds.zip -d " + admin_cred_dir )
-            machine.sys("sed -i 's/" + self.clc.hostname + "/" + machine.hostname  +"/g' " + admin_cred_dir + "/eucarc")
+            machine.sys("sed -i 's/" + self.get_ec2_ip() + "/" + machine.hostname  +"/g' " + admin_cred_dir + "/eucarc")
             
         
     def setup_local_creds_dir(self, admin_cred_dir):
