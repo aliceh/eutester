@@ -248,9 +248,9 @@ class Eucaops(EC2ops,S3ops,IAMops,STSops,CWops, ASops, ELBops):
             self.debug("Properly modified property " + property)
         else:
             raise Exception("Setting property " + property + " failed")
-
-
-    def cleanup_artifacts(self,instances=True, snapshots=True, volumes=True, load_balancers=True, ip_addresses=True, auto_scaling_groups=True, launch_configurations=True, keypairs=True):
+    
+   
+    def cleanup_artifacts(self,instances=True, snapshots=True, volumes=True, load_balancers=True, ip_addresses=True):
         """
         Description: Attempts to remove artifacts created during and through this eutester's lifespan.
         """
