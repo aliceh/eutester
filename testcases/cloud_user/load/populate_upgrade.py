@@ -11,16 +11,12 @@ class PopulateUpgrade(EutesterTestCase):
     def __init__(self, extra_args= None):
         self.setuptestcase()
         self.setup_parser()
-        self.parser.add_argument("--region", default=None)
         if extra_args:
             for arg in extra_args:
                 self.parser.add_argument(arg)
         self.get_args()
         # Setup basic eutester object
-        if self.args.region:
-            self.tester = EC2ops( credpath=self.args.credpath, region=self.args.region)
-        else:
-            self.tester = Eucaops( credpath=self.args.credpath, config_file=self.args.config,password=self.args.password)
+        self.tester = Eucaops( credpath=self.args.credpath, config_file=self.args.config,password=self.args.password)
         self.tester.poll_count = 120
 
         self.security_groups = []
@@ -78,12 +74,12 @@ class PopulateUpgrade(EutesterTestCase):
         instance_4 = self.tester.run_instance(test_image, keypair=self.keypair.name, group=self.group.name).instances[0]
         instance_4_address = self.tester.allocate_address()
         self.tester.associate_address(instance=instance_4, address=instance_4_address)
-        volume = self.tester.create_volume(azone=self.zone)
+        volume = self.tester.create_volume(zone=self.zone)
         instance_4.attach_volume(volume=volume)
 
         # Test: INSTANCESTORE VOLATTACH:yes ADDR:system
         instance_5 = self.tester.run_instance(test_image, keypair=self.keypair.name, group=self.group.name).instances[0]
-        volume = self.tester.create_volume(azone=self.zone)
+        volume = self.tester.create_volume(zone=self.zone)
         instance_5.attach_volume(volume=volume)
 
         self.group = self.tester.add_group(group_name="group-" + str(time.time()))

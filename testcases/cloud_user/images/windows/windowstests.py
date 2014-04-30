@@ -31,11 +31,9 @@
 # Author: matt.clark@eucalyptus.com
   
 from eucaops import Eucaops
-import eutester.eutestcase
 from eutester.eutestcase import EutesterTestCase
-from eutester.eutestcase import EutesterTestResult
+from eutester import Eutester
 from eutester import machine
-import eutester.machine 
 from testcases.cloud_user.images.imageutils import ImageUtils
 from testcases.cloud_user.ebs.ebstestsuite import TestZone
 from testcases.cloud_user.images.windows import windowsproxytests
@@ -48,11 +46,10 @@ from datetime import datetime
 
 class WindowsTests(EutesterTestCase):
     
-    def __init__(self, 
+    def __init__(self,
                  #setup eutester and test environment...
                  tester=None, 
-                 config_file=None, 
-                 cred_path=None,
+                 config_file=None,
                  password=None, 
                  credpath=None, 
                  eof=True,
@@ -84,8 +81,49 @@ class WindowsTests(EutesterTestCase):
                  win_proxy_username = 'Administrator',
                  win_proxy_password = None, 
                  win_proxy_keypath = None,
+                 clean_on_exit=False,
                  authports=['tcp:3389','tcp:80','tcp:443', 'tcp:5985', 'tcp:5986']
                  ):
+        """
+        Definition:
+        This class is intended to hold most of the methods and state(s) needed to run an array of Windows Instance
+        related tests. Most TestUnits will use a subset of these methods to define a testcase/operation. See sample
+        testcases scripts which reference this class for examples and use cases.
+
+        :param tester: eutester object
+        :param config_file: eutester config file
+        :param credpath: path to cloud credentials/eucarc
+        :param password: password used to access remote components
+        :param eof: boolean, end on failure
+        :param destpath: path on 'work component' in which to peform work. ie: where to download and bundle an img.
+        :param time_per_gig: Time in seconds to be used for image related timeouts
+        :param inter_bundle_timeout: Time to wait between bundle operation. Mainly used to detect hung operations
+        :param upload_timeout: Time to wait for the upload portion of image operation
+        :param work_component: The component or machine in which work is to be executed on, ie download, bundles, etc.
+        :param component_credpath: The path on the 'work_component' in which to find creds. ie for tools exectuted remotely
+        :param bucketname: Bucketname to be used as a global for operations in this test.
+        :param group: Security group to use for this test
+        :param testvolumes: List of volumes that are intended to be used in by this obj's test(s)
+        :param testvolcount: Number of volumes to be used for ebs related tests defined in this test obj
+        :param keypair: keypair ot be used for this test(s)
+        :param zone: zone/cluster to be used to executue these tests
+        :param url: url to use for fetching remote images to be built into EMI(s) for this test
+        :param user_data: Any (instance) user data to be used for in this test
+        :param emi: emi to be used for this test
+        :param private_addressing: boolean, used to run instances w/o a public ip
+        :param instance_password: password used for accessing instance(s) within this test
+        :param instance_keypath: keypath used to access instance(s) within this test
+        :param vmtype: type of vm to use when running instance(s) in this test, ie m1.xlarge
+        :param emi_location: string used to find an existing EMI by the EMI's location-string
+        :param image_path: path to an image on the local machine or work component
+        :param instance: existing instance to use within this test
+        :param win_proxy_hostname: The ip or FQDN of the machine used to proxy powershell and ldap tests against
+        :param win_proxy_username: The user name for ssh login on the machine used to  proxy powershell and ldap tests against
+        :param win_proxy_password: The password for ssh login on the machine used to  proxy powershell and ldap tests against
+        :param win_proxy_keypath: The keypath for ssh login on the machine used to  proxy powershell and ldap tests against
+        :param authports: What ports should be authorized within security group for testing
+        """
+        self.setuptestcase()
         if tester is None:
             self.tester = Eucaops( config_file=config_file,password=password,credpath=credpath)
         else:
@@ -137,7 +175,7 @@ class WindowsTests(EutesterTestCase):
         self.setup_test_env()
         if self.instance and self.proxy:
                 self.update_proxy_instance_data()
-    
+    @Eutester.printinfo
     def setup_proxy(self, proxy_hostname, proxy_keypath=None, proxy_username=None, proxy_password=None, debugmethod=None):
         debugmethod = debugmethod or (lambda msg: self.debug(msg, traceback=3))
         proxy = windowsproxytests.WindowsProxyTests(proxy_hostname, 
@@ -176,9 +214,9 @@ class WindowsTests(EutesterTestCase):
             if re.search(match,image.location):
                 retlist.append(image)
         return retlist
-        
-    
-        
+
+
+
     def update_proxy_instance_data(self, win_instance=None, instance_password=None ):
         if self.proxy is None:
             return
@@ -189,7 +227,7 @@ class WindowsTests(EutesterTestCase):
                 password = self.test_get_windows_instance_password()
             self.proxy.win_password = password
         except Exception, e:
-            raise Exception('Warning: update_proxy_instance_data: Could not get instance password')    
+            raise Exception('Warning: update_proxy_instance_data: Could not get instance password, err:'+str(e))
         
         
             
@@ -294,7 +332,7 @@ class WindowsTests(EutesterTestCase):
         for testzone in zonelist:
             zone = testzone.name
             for x in xrange(0,volsperzone):
-                vol = euvolume.EuVolume.make_euvol_from_vol(self.tester.create_volume(zone, size=size, snapshot=snapshot,timepergig=timepergig))
+                vol = EuVolume.make_euvol_from_vol(self.tester.create_volume(zone, size=size, snapshot=snapshot,timepergig=timepergig))
                 testzone.volumes.append(vol)
                 self.debug('create_vols_per_zone created  vol('+str(x)+') zone:'+str(zone)+' vol:'+str(vol.id))
             
@@ -308,6 +346,7 @@ class WindowsTests(EutesterTestCase):
                                       destpath = None, 
                                       inter_bundle_timeout = None, 
                                       upload_timeout = None,
+                                      virtualization_type = None,
                                       wget_user = None,
                                       wget_password = None,
                                       time_per_gig = None,
@@ -325,12 +364,13 @@ class WindowsTests(EutesterTestCase):
                                            interbundle_timeout = (inter_bundle_timeout or self.inter_bundle_timeout), 
                                            upload_timeout = (upload_timeout or self.upload_timeout),
                                            destpath = (destpath or self.destpath),
+                                           virtualization_type=virtualization_type,
                                            wget_user = (wget_user), 
                                            wget_password = (wget_password),   
                                            time_per_gig = (time_per_gig or self.time_per_gig) )
         
     def create_windows_emi_from_file(self,
-                                     fpath,
+                                     image_file_path,
                                      component = None, 
                                      component_credpath = None,
                                      bucketname = None, 
@@ -344,7 +384,8 @@ class WindowsTests(EutesterTestCase):
         Work is done on a given machine and requires euca2ools present on that machine. 
         Returns the emi of the registered image
         '''
-        return self.iu.create_emi_from_url( 
+        return self.iu.create_emi_from_url(
+                                           url = None,
                                            component = (component or self.component), 
                                            bucketname = (bucketname or self.bucketname), 
                                            component_credpath = (component_credpath or self.component_credpath), 
@@ -352,7 +393,7 @@ class WindowsTests(EutesterTestCase):
                                            interbundle_timeout = (inter_bundle_timeout or self.inter_bundle_timeout), 
                                            upload_timeout = (upload_timeout or self.upload_timeout),
                                            destpath = (destpath or self.destpath),
-                                           filepath = fpath,
+                                           filepath = image_file_path,
                                            time_per_gig = (time_per_gig or self.time_per_gig) )
         
     def test_run_windows_emi(self,
@@ -384,7 +425,12 @@ class WindowsTests(EutesterTestCase):
                                  group = group or self.group, 
                                  type = type, 
                                  zone=zone, 
-                                 min=min, max=max, user_data=user_data, private_addressing=private_addressing, is_reachable=False, timeout=timeout)
+                                 min=min,
+                                 max=max,
+                                 user_data=user_data,
+                                 private_addressing=private_addressing,
+                                 is_reachable=False,
+                                 timeout=timeout)
         
         
         self.instance = res.instances[0]
@@ -539,9 +585,7 @@ class WindowsTests(EutesterTestCase):
                 return dev
         raise Exception('Instance:'+str(instance.id)+", no free devs. Has "+str(count)+" devices in use by ebs already. max:"+str(max))    
         
-                
-                
-        
+
            
     def test_attach_single_volume(self, instance=None, dev=None):
         instance = instance or self.instance
@@ -667,11 +711,44 @@ class WindowsTests(EutesterTestCase):
         list.append(self.create_testcase_from_method(self.proxy.ps_rdpermission_test))
         #Run this test case list only exit on fail if a given test method has the flag set. 
         self.run_test_case_list(list, eof=False)
-        
-            
-        
-    
-    
+
+
+
+    def simple_windows_test_suite(self,instance=None, clean_on_exit=False):
+        """
+        Runs a basic subset of windows tests against either a running instance, or will try to find
+        a Windows emi by location string and create a running instance to test from that emi.
+        :param instance: boto instance object to run windows tests against.
+
+        """
+        instance = instance or self.instance
+        tests = []
+        if instance is None or instance.state != 'running':
+            self.debug("basic_proxy_test_suite: No running instances found, creating instance now")
+            test = self.create_testcase_from_method(self.get_windows_emi)
+            test.eof = True
+            tests.append(test)
+            test = self.create_testcase_from_method(self.get_windows_instance)
+            test.eof = True
+            tests.append(test)
+        tests.append(self.create_testunit_from_method(self.test_get_windows_instance_password, eof=True))
+        tests.append(self.create_testunit_from_method(self.update_proxy_info, eof=True))
+        tests.append(self.create_testunit_from_method(self.test_wait_for_instance_boot))
+        tests.append(self.create_testunit_from_method(self.test_poll_for_rdp_port_status, eof=True))
+        tests.append(self.create_testunit_from_method(self.proxy.ps_login_test, eof=True))
+        tests.append(self.create_testunit_from_method(self.proxy.ps_ephemeral_test))
+        tests.append(self.create_testunit_from_method(self.proxy.ps_hostname_test))
+        tests.append(self.create_testunit_from_method(self.proxy.ps_virtio_test))
+        self.run_test_case_list(tests, clean_on_exit=clean_on_exit, eof=False)
+
+    #def windows_bundle_test_from_emi(self, emi, timeout_minutes=35):
+
+
+
+
+    def windows_bundle_test_from_instance(self, instance, timeout_minutes=25):
+        timeout = 60 * timeout_minutes
+        cli = self.tester
     
         
     

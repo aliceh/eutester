@@ -32,7 +32,7 @@
 #
 # Author: vic.iglesias@eucalyptus.com
 
-__version__ = '0.0.6'
+__version__ = '0.0.9'
 
 import re
 import os
@@ -45,8 +45,9 @@ import traceback
 import StringIO
 import eulogger
 import types
+import operator
 
-
+from functools import wraps
 
 
 class TimeoutFunctionException(Exception): 
@@ -83,8 +84,6 @@ class Eutester(object):
             self.aws_secret_access_key = self.get_secret_key()
             self.account_id = self.get_account_id()
             self.user_id = self.get_user_id()
-        else:
-            raise Exception("Please provide credpath argument")
 
     def get_access_key(self):
         if not self.aws_access_key_id:     
@@ -114,16 +113,6 @@ class Eutester(object):
         """Parse the eucarc for the EC2_ACCOUNT_NUMBER"""
         ec2_url = self.parse_eucarc("EC2_URL")
         return ec2_url.split(':')[1].split("/")[0]
-    
-    def get_s3_ip(self):
-        """Parse the eucarc for the S3_URL"""
-        walrus_url = self.parse_eucarc("S3_URL")
-        return walrus_url.split("/")[2].split(":")[0]
-    
-    def get_ec2_ip(self):
-        """Parse the eucarc for the EC2_URL"""
-        ec2_url = self.parse_eucarc("EC2_URL")
-        return ec2_url.split("/")[2].split(":")[0]
 
     def parse_eucarc(self, field):
         with open( self.credpath + "/eucarc") as eucarc:
@@ -136,10 +125,22 @@ class Eutester(object):
         raise TimeoutFunctionException()
 
     def local(self, cmd):
-        """ Run a command locally on the tester"""
-        std_out_return = os.popen(cmd).readlines()
-        return std_out_return
-    
+        """
+        Run a command on the localhost
+        :param cmd: str representing the command to be run
+        :return: :raise: CalledProcessError on non-zero return code
+        """
+        import subprocess
+        args = cmd.split()
+        process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=4096)
+        output, unused_err = process.communicate()
+        retcode = process.poll()
+        if retcode:
+            error = subprocess.CalledProcessError(retcode, cmd)
+            error.output = output
+            raise error
+        return output.split("\n")
+
     def found(self, command, regex):
         """ Returns a Boolean of whether the result of the command contains the regex
         """
@@ -161,15 +162,18 @@ class Eutester(object):
             return False
         self.debug("Attempting to ping " + address)
         while poll_count > 0:
-            poll_count -= 1 
-            if self.found("ping -c 1 " + address, "1.*1.*received"):
+            poll_count -= 1
+            try:
+                self.local("ping -c 1 " + address)
                 self.debug("Was able to ping address")
                 return True
-            if poll_count == 0:
-                self.critical("Was unable to ping address")
-                return False
+            except:
+                pass
             self.debug("Ping unsuccessful retrying in 2 seconds " + str(poll_count) + " more times")
-            self.sleep(2)    
+            self.sleep(2)
+        self.critical("Was unable to ping address")
+        return False
+
     
     def scan_port_range(self, ip, start, stop, timeout=1, tcp=True):
         '''
@@ -260,6 +264,14 @@ class Eutester(object):
         """Convinience function for time.sleep()"""
         self.debug("Sleeping for " + str(seconds) + " seconds")
         time.sleep(seconds)
+
+    @staticmethod
+    def render_file_template(src, dest, **kwargs):
+        import jinja2
+        with open(src) as sfile:
+            templ = jinja2.Template(sfile.read())
+            with open(dest, 'w') as dfile:
+                dfile.write(templ.render(kwargs))
     
     def id_generator(self, size=6, chars=string.ascii_uppercase + string.ascii_lowercase  + string.digits ):
         """Returns a string of size with random charachters from the chars array.
@@ -283,12 +295,14 @@ class Eutester(object):
         
         2013-02-07 14:46:58,928] [DEBUG]:(mydir/myfile.py:1234) - Starting method: myfunction()
         2013-02-07 14:46:58,928] [DEBUG]:---> myfunction(self, arg1=123, arg2=abc, kwarg='words')
-    
         '''
+
+        @wraps(func)
         def methdecor(*func_args, **func_kwargs):
             try:
                 defaults = func.func_defaults
                 kw_count = len(defaults or [])
+                selfobj = None
                 arg_count = func.func_code.co_argcount - kw_count
                 var_names = func.func_code.co_varnames[:func.func_code.co_argcount]
                 arg_names = var_names[:arg_count]
@@ -320,7 +334,7 @@ class Eutester(object):
                         kw_string += str(kw_defaults[kw])
                 debugstring = '\n--->('+str(os.path.basename(func.func_code.co_filename))+":"+str(func.func_code.co_firstlineno)+")Starting method: "+str(func.func_name)+'('+arg_string+kw_string+')'
                 debugmethod = None
-                if hasattr(selfobj,'debug'):
+                if selfobj and hasattr(selfobj,'debug'):
                     debug = getattr(selfobj, 'debug')
                     if isinstance(debug, types.MethodType):
                         debugmethod = debug
@@ -333,7 +347,38 @@ class Eutester(object):
                 print 'printinfo method decorator error:'+str(e)
             return func(*func_args, **func_kwargs)
         return methdecor
-    
+
+    def wait_for_result(self, callback, result, timeout=60, poll_wait=10, oper=operator.eq,  **callback_kwargs):
+        """
+        Wait for the instance to enter the state
+
+        :param instance: Boto instance object to check the state on
+        :param result: result from the call back provided that we are looking for
+        :param poll_count: Number of 10 second poll intervals to wait before failure (for legacy test script support)
+        :param timeout: Time in seconds to wait before failure
+        :param oper: operator obj used to evaluate 'result' against callback's result. ie operator.eq, operator.ne, etc..
+        :return: result upon success
+        :raise: Exception when instance does not enter proper state
+        """
+        self.debug( "Beginning poll loop for result " + str(callback.func_name) + " to go to " + str(result) )
+        start = time.time()
+        elapsed = 0
+        current_state =  callback(**callback_kwargs)
+        ### If the instance changes state or goes to the desired state before my poll count is complete
+        while( elapsed <  timeout and not oper(current_state,result) ):
+            self.debug(  str(callback.func_name) + ' returned: "' + str(current_state) + '" after '
+                       + str(elapsed/60) + " minutes " + str(elapsed%60) + " seconds.")
+            self.sleep(poll_wait)
+            current_state = callback(**callback_kwargs)
+            elapsed = int(time.time()- start)
+        self.debug(  str(callback.func_name) + ' returned: "' + str(current_state) + '" after '
+                    + str(elapsed/60) + " minutes " + str(elapsed%60) + " seconds.")
+        if not oper(current_state,result):
+            raise Exception( str(callback.func_name) + " did not return " + str(operator.ne.__name__) +
+                             "(" + str(result) + ") true after elapsed:"+str(elapsed))
+        return current_state
+
+
     @classmethod
     def get_traceback(cls):
         '''
@@ -350,19 +395,7 @@ class Eutester(object):
     
     def __str__(self):
         return 'got self'
-        """
-        Prints informations about configuration of Eucateser as configuration file,
-        how many errors, the path of the Eucalyptus, and the path of the user credentials
-        """
-        s  = "+++++++++++++++++++++++++++++++++++++++++++++++++++++\n"
-        s += "+" + "Eucateser Configuration" + "\n"
-        s += "+" + "+++++++++++++++++++++++++++++++++++++++++++++++\n"
-        s += "+" + "Config File: " + str(self.config_file) +"\n"
-        s += "+" + "Fail Count: " +  str(self.fail_count) +"\n"
-        s += "+" + "Eucalyptus Path: " +  str(self.eucapath) +"\n"
-        s += "+" + "Credential Path: " +  str(self.credpath) +"\n"
-        s += "+++++++++++++++++++++++++++++++++++++++++++++++++++++\n"
-        return s
+
     
 
 
